@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		2630D9F22FA2BCFB00D7C733 /* Word.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2630D9F12FA2BCFB00D7C733 /* Word.swift */; };
+		2630D9F42FA2BCFB00D7C733 /* QuizViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2630D9F32FA2BCFB00D7C733 /* QuizViewModel.swift */; };
+		2630D9F62FA2BCFC00D7C733 /* AddEditWordSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2630D9F52FA2BCFC00D7C733 /* AddEditWordSheet.swift */; };
 		263236A32FA2784A00F3668B /* RealityKitContent in Frameworks */ = {isa = PBXBuildFile; productRef = 263236A22FA2784A00F3668B /* RealityKitContent */; };
 /* End PBXBuildFile section */
 
@@ -21,6 +24,9 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		2630D9F12FA2BCFB00D7C733 /* Word.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Word.swift; sourceTree = "<group>"; };
+		2630D9F32FA2BCFB00D7C733 /* QuizViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuizViewModel.swift; sourceTree = "<group>"; };
+		2630D9F52FA2BCFC00D7C733 /* AddEditWordSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddEditWordSheet.swift; sourceTree = "<group>"; };
 		2632369D2FA2784A00F3668B /* WordVision.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WordVision.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		263236A12FA2784A00F3668B /* RealityKitContent */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = RealityKitContent; sourceTree = "<group>"; };
 		263236B92FA2784B00F3668B /* WordVisionTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WordVisionTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -78,6 +84,9 @@
 				263236A02FA2784A00F3668B /* Packages */,
 				263236BC2FA2784B00F3668B /* WordVisionTests */,
 				2632369E2FA2784A00F3668B /* Products */,
+				2630D9F12FA2BCFB00D7C733 /* Word.swift */,
+				2630D9F32FA2BCFB00D7C733 /* QuizViewModel.swift */,
+				2630D9F52FA2BCFC00D7C733 /* AddEditWordSheet.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -208,6 +217,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				2630D9F22FA2BCFB00D7C733 /* Word.swift in Sources */,
+				2630D9F62FA2BCFC00D7C733 /* AddEditWordSheet.swift in Sources */,
+				2630D9F42FA2BCFB00D7C733 /* QuizViewModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

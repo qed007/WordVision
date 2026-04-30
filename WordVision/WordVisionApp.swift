@@ -1,40 +1,27 @@
-//
-//  WordVisionApp.swift
-//  WordVision
-//
-//  Created by Derek Pickett on 4/29/26.
-//
-
 import SwiftUI
+import SwiftData
 
 @main
 struct WordVisionApp: App {
-    
     @State private var appModel = AppModel()
-    @State private var avPlayerViewModel = AVPlayerViewModel()
-    
+    @State private var quizViewModel = QuizViewModel()
+
     var body: some Scene {
         WindowGroup {
-            if avPlayerViewModel.isPlaying {
-                AVPlayerView(viewModel: avPlayerViewModel)
-            } else {
-                ContentView()
-                    .environment(appModel)
-            }
+            ContentView()
+                .environment(appModel)
+                .environment(quizViewModel)
         }
-        
+        .defaultSize(width: 900, height: 600)
+        .modelContainer(for: Word.self)
+
         ImmersiveSpace(id: appModel.immersiveSpaceID) {
             ImmersiveView()
                 .environment(appModel)
-                .onAppear {
-                    appModel.immersiveSpaceState = .open
-                    avPlayerViewModel.play()
-                }
-                .onDisappear {
-                    appModel.immersiveSpaceState = .closed
-                    avPlayerViewModel.reset()
-                }
+                .environment(quizViewModel)
+                .onAppear { appModel.immersiveSpaceState = .open }
+                .onDisappear { appModel.immersiveSpaceState = .closed }
         }
-        .immersionStyle(selection: .constant(.full), in: .full)
+        .immersionStyle(selection: .constant(.mixed), in: .mixed)
     }
 }
