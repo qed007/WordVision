@@ -30,6 +30,7 @@
 		2632369D2FA2784A00F3668B /* WordVision.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WordVision.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		263236A12FA2784A00F3668B /* RealityKitContent */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = RealityKitContent; sourceTree = "<group>"; };
 		263236B92FA2784B00F3668B /* WordVisionTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WordVisionTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		26BDCA462FA3F10B00FC4B2D /* CLAUDE.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = CLAUDE.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -80,6 +81,7 @@
 		263236942FA2784A00F3668B = {
 			isa = PBXGroup;
 			children = (
+				26BDCA462FA3F10B00FC4B2D /* CLAUDE.md */,
 				2632369F2FA2784A00F3668B /* WordVision */,
 				263236A02FA2784A00F3668B /* Packages */,
 				263236BC2FA2784B00F3668B /* WordVisionTests */,
