@@ -144,16 +144,15 @@ struct ContentView: View {
                 VStack(spacing: 12) {
                     if appModel.chosenWords.count >= 2 {
                         Button {
-                            withAnimation(.easeInOut(duration: 0.5)) {
-                                quizViewModel.startQuiz(with: appModel.chosenWords)
-                                appModel.appPhase = .quiz
-                            }
+                            startImmersiveQuiz()
                         } label: {
-                            Label("Start Quiz (\(appModel.chosenWords.count) words)", systemImage: "play.fill")
+                            Label("Start Immersive Quiz (\(appModel.chosenWords.count) words)",
+                                  systemImage: "visionpro")
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 8)
                         }
                         .buttonStyle(.borderedProminent)
+                        .disabled(appModel.quizImmersiveSpaceState == .inTransition)
                     } else {
                         Text("Select at least 2 words")
                             .font(.caption)
@@ -168,50 +167,44 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Quiz Active
+    // MARK: - Quiz Active (window companion)
 
     private var quizActiveView: some View {
         VStack(spacing: 24) {
-            Text("Quiz in Progress")
+            Image(systemName: "visionpro")
+                .font(.system(size: 64))
+                .foregroundStyle(.cyan)
+
+            Text("Quiz in Immersive Space")
                 .font(.largeTitle.bold())
+
+            Text("Look around — definitions float in front of you and the answer words drift in 3D. Pinch and drag a word onto the definition card, or tap one to answer.")
+                .font(.title3)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: 560)
 
             HStack(spacing: 40) {
                 statBubble(title: "Score", value: quizViewModel.scoreText, color: .blue)
                 statBubble(title: "Progress", value: quizViewModel.progress, color: .purple)
             }
 
-            if let result = quizViewModel.lastResult {
-                resultView(result)
-
-                Button("Next Question") {
-                    withAnimation(.spring(response: 0.3)) {
-                        quizViewModel.nextQuestion()
-                    }
+            if appModel.quizImmersiveSpaceState != .open {
+                Button {
+                    startImmersiveQuiz()
+                } label: {
+                    Label("Re-enter Immersive Space", systemImage: "visionpro")
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 6)
                 }
                 .buttonStyle(.borderedProminent)
-                .padding(.top, 8)
-            } else {
-                Text("Tap or throw a word at the definition")
-                    .foregroundStyle(.secondary)
-                    .font(.title3)
-
-                if let definition = quizViewModel.currentDefinition {
-                    Text(definition)
-                        .font(.title2)
-                        .multilineTextAlignment(.center)
-                        .padding()
-                        .frame(maxWidth: 500)
-                        .glassBackgroundEffect()
-                }
+                .disabled(appModel.quizImmersiveSpaceState == .inTransition)
             }
 
             Spacer()
 
             Button("End Quiz") {
-                withAnimation {
-                    quizViewModel.endQuiz()
-                    appModel.appPhase = .browsing
-                }
+                endImmersiveQuiz()
             }
             .foregroundStyle(.red)
         }
@@ -241,10 +234,7 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
 
             Button {
-                withAnimation {
-                    quizViewModel.endQuiz()
-                    appModel.appPhase = .browsing
-                }
+                endImmersiveQuiz()
             } label: {
                 Label("Back to Words", systemImage: "arrow.left")
                     .padding(.horizontal, 20)
@@ -253,6 +243,41 @@ struct ContentView: View {
             .buttonStyle(.borderedProminent)
         }
         .padding(30)
+    }
+
+    // MARK: - Quiz Lifecycle
+
+    private func startImmersiveQuiz() {
+        Task {
+            // Close the mixed-immersion browsing space first; visionOS allows
+            // only one immersive space open at a time.
+            if appModel.immersiveSpaceState == .open {
+                appModel.immersiveSpaceState = .inTransition
+                await dismissImmersiveSpace()
+            }
+
+            quizViewModel.startQuiz(with: appModel.chosenWords)
+            appModel.appPhase = .quiz
+
+            appModel.quizImmersiveSpaceState = .inTransition
+            switch await openImmersiveSpace(id: appModel.quizImmersiveSpaceID) {
+            case .opened: break
+            case .userCancelled, .error: fallthrough
+            @unknown default:
+                appModel.quizImmersiveSpaceState = .closed
+            }
+        }
+    }
+
+    private func endImmersiveQuiz() {
+        Task {
+            quizViewModel.endQuiz()
+            appModel.appPhase = .browsing
+            if appModel.quizImmersiveSpaceState == .open {
+                appModel.quizImmersiveSpaceState = .inTransition
+                await dismissImmersiveSpace()
+            }
+        }
     }
 
     // MARK: - Components
@@ -323,24 +348,6 @@ struct ContentView: View {
         .glassBackgroundEffect()
     }
 
-    @ViewBuilder
-    private func resultView(_ result: QuizViewModel.AnswerResult) -> some View {
-        switch result {
-        case .correct:
-            Label("Correct!", systemImage: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-                .font(.title)
-        case .incorrect(let correctWord):
-            VStack(spacing: 4) {
-                Label("Incorrect", systemImage: "xmark.circle.fill")
-                    .foregroundStyle(.red)
-                    .font(.title)
-                Text("The answer was: \(correctWord)")
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
     private var immersiveSpaceButton: some View {
         Button {
             Task {
@@ -349,6 +356,10 @@ struct ContentView: View {
                     appModel.immersiveSpaceState = .inTransition
                     await dismissImmersiveSpace()
                 case .closed:
+                    if appModel.quizImmersiveSpaceState == .open {
+                        appModel.quizImmersiveSpaceState = .inTransition
+                        await dismissImmersiveSpace()
+                    }
                     appModel.immersiveSpaceState = .inTransition
                     switch await openImmersiveSpace(id: appModel.immersiveSpaceID) {
                     case .opened: break
@@ -362,7 +373,7 @@ struct ContentView: View {
             }
         } label: {
             Label(
-                appModel.immersiveSpaceState == .open ? "Exit 3D Space" : "Enter 3D Space",
+                appModel.immersiveSpaceState == .open ? "Exit 3D Space" : "Browse Words in 3D",
                 systemImage: appModel.immersiveSpaceState == .open ? "xmark.circle" : "visionpro"
             )
         }

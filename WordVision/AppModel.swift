@@ -4,6 +4,7 @@ import SwiftUI
 @Observable
 class AppModel {
     let immersiveSpaceID = "ImmersiveSpace"
+    let quizImmersiveSpaceID = "QuizImmersiveSpace"
 
     enum ImmersiveSpaceState {
         case closed
@@ -17,6 +18,7 @@ class AppModel {
     }
 
     var immersiveSpaceState = ImmersiveSpaceState.closed
+    var quizImmersiveSpaceState = ImmersiveSpaceState.closed
     var appPhase = AppPhase.browsing
     var chosenWords: [Word] = []
 }
