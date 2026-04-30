@@ -23,5 +23,14 @@ struct WordVisionApp: App {
                 .onDisappear { appModel.immersiveSpaceState = .closed }
         }
         .immersionStyle(selection: .constant(.mixed), in: .mixed)
+
+        ImmersiveSpace(id: appModel.quizImmersiveSpaceID) {
+            QuizImmersiveView()
+                .environment(appModel)
+                .environment(quizViewModel)
+                .onAppear { appModel.quizImmersiveSpaceState = .open }
+                .onDisappear { appModel.quizImmersiveSpaceState = .closed }
+        }
+        .immersionStyle(selection: .constant(.full), in: .full)
     }
 }
