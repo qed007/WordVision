@@ -18,20 +18,9 @@ struct QuizImmersiveView: View {
     @State private var definitionAnchor = Entity()
     @State private var scoreAnchor = Entity()
     @State private var controlsAnchor = Entity()
-    @State private var dragStates: [ObjectIdentifier: DragState] = [:]
-    @State private var throwTasks: [ObjectIdentifier: Task<Void, Never>] = [:]
-    @State private var rotationStarts: [ObjectIdentifier: simd_quatf] = [:]
     @State private var floatTask: Task<Void, Never>?
     @State private var lastSyncedQuestion = -1
-
-    /// Tracks per-entity drag samples so we can compute throw velocity on release.
-    private struct DragState {
-        var startPosition: SIMD3<Float>
-        var startRotation: simd_quatf
-        var lastPosition: SIMD3<Float>
-        var lastTime: TimeInterval
-        var velocity: SIMD3<Float>
-    }
+    @State private var subscriptions: [EventSubscription] = []
 
     var body: some View {
         RealityView { content, attachments in
@@ -62,6 +51,19 @@ struct QuizImmersiveView: View {
                 controlsAnchor.addChild(controls)
                 sceneRoot.addChild(controlsAnchor)
             }
+
+            // ManipulationComponent fires events as the user grabs and releases
+            // word entities. We use these to free a word from the floating
+            // animation when first grabbed and to detect answer attempts when
+            // the user lets go near the definition card.
+            let beginSub = content.subscribe(to: ManipulationEvents.WillBegin.self) { event in
+                handleManipulationBegin(entity: event.entity)
+            }
+            let releaseSub = content.subscribe(to: ManipulationEvents.WillRelease.self) { event in
+                handleManipulationRelease(entity: event.entity)
+            }
+            subscriptions.append(beginSub)
+            subscriptions.append(releaseSub)
 
         } update: { _, _ in
             syncWordEntities()
@@ -137,18 +139,6 @@ struct QuizImmersiveView: View {
             }
         }
         .gesture(
-            DragGesture()
-                .targetedToAnyEntity()
-                .onChanged { value in handleDragChanged(value) }
-                .onEnded { value in handleDragEnded(value) }
-        )
-        .simultaneousGesture(
-            RotateGesture3D()
-                .targetedToAnyEntity()
-                .onChanged { value in handleRotateChanged(value) }
-                .onEnded { value in handleRotateEnded(value) }
-        )
-        .gesture(
             TapGesture()
                 .targetedToAnyEntity()
                 .onEnded { value in handleTap(on: value.entity) }
@@ -156,8 +146,7 @@ struct QuizImmersiveView: View {
         .onAppear { startFloatAnimation() }
         .onDisappear {
             floatTask?.cancel()
-            for task in throwTasks.values { task.cancel() }
-            throwTasks.removeAll()
+            subscriptions.removeAll()
         }
     }
 
@@ -176,11 +165,6 @@ struct QuizImmersiveView: View {
             currentQuestion != lastSyncedQuestion
 
         if needsRebuild {
-            for task in throwTasks.values { task.cancel() }
-            throwTasks.removeAll()
-            dragStates.removeAll()
-            rotationStarts.removeAll()
-
             for child in Array(wordsParent.children) {
                 child.removeFromParent()
             }
@@ -193,7 +177,8 @@ struct QuizImmersiveView: View {
         let words = quizViewModel.quizWords
         guard !words.isEmpty else { return }
 
-        let radius: Float = 1.1
+        // Wider radius to give the larger 3D words breathing room.
+        let radius: Float = 1.4
         let count = words.count
 
         for (i, word) in words.enumerated() {
@@ -201,7 +186,7 @@ struct QuizImmersiveView: View {
             // Spread words on a gentle arc in front of the user.
             let pos = SIMD3<Float>(
                 cos(angle) * radius * 0.9,
-                sin(Float(i) * 0.7) * 0.15,
+                sin(Float(i) * 0.7) * 0.18,
                 -abs(sin(angle)) * radius * 0.4
             )
 
@@ -211,44 +196,65 @@ struct QuizImmersiveView: View {
         }
     }
 
-    private func makeWordEntity(text: String, homePosition: SIMD3<Float>) -> ModelEntity {
+    private func makeWordEntity(text: String, homePosition: SIMD3<Float>) -> Entity {
+        // Larger glyphs with deeper extrusion give each word real volume so
+        // only a few read at any time, which is what the quiz wants.
         let mesh = MeshResource.generateText(
             text,
-            extrusionDepth: 0.04,
-            font: .systemFont(ofSize: 0.12, weight: .heavy),
+            extrusionDepth: 0.07,
+            font: .systemFont(ofSize: 0.20, weight: .heavy),
             containerFrame: .zero,
             alignment: .center,
             lineBreakMode: .byTruncatingTail
         )
 
+        // Glossy, slightly emissive metal so the extruded sides catch the
+        // scene's lighting and read as solid 3D objects.
         var material = PhysicallyBasedMaterial()
-        material.baseColor = .init(tint: .cyan)
-        material.roughness = 0.25
-        material.metallic = 0.85
-        material.emissiveColor = .init(color: UIColor.cyan.withAlphaComponent(0.6))
+        material.baseColor = .init(tint: UIColor(red: 0.45, green: 0.85, blue: 1.0, alpha: 1.0))
+        material.roughness = 0.18
+        material.metallic = 0.95
+        material.emissiveColor = .init(color: UIColor(red: 0.2, green: 0.7, blue: 1.0, alpha: 1.0))
+        material.emissiveIntensity = 0.6
+        material.clearcoat = 0.8
+        material.clearcoatRoughness = 0.15
 
-        let entity = ModelEntity(mesh: mesh, materials: [material])
-        entity.name = text
+        let textEntity = ModelEntity(mesh: mesh, materials: [material])
+        textEntity.name = "\(text)-mesh"
 
         // Center the extruded text on its bounds so dragging feels natural.
         let bounds = mesh.bounds
         let center = bounds.center
-        entity.position = -center
+        textEntity.position = -center
 
-        let wrapper = ModelEntity()
-        wrapper.addChild(entity)
+        let wrapper = Entity()
+        wrapper.name = text
+        wrapper.addChild(textEntity)
         wrapper.components.set(QuizWordComponent(wordText: text, homePosition: homePosition))
-        wrapper.components.set(InputTargetComponent(allowedInputTypes: .all))
-        wrapper.components.set(HoverEffectComponent())
 
+        let extents = bounds.extents
         let collisionExtents = SIMD3<Float>(
-            max(bounds.extents.x, 0.1),
-            max(bounds.extents.y, 0.1),
-            max(bounds.extents.z, 0.05)
+            max(extents.x, 0.12),
+            max(extents.y, 0.12),
+            max(extents.z, 0.08)
         )
-        wrapper.components.set(CollisionComponent(shapes: [
-            .generateBox(size: collisionExtents)
-        ]))
+        let collisionShape = ShapeResource.generateBox(size: collisionExtents)
+
+        // ManipulationComponent provides native one- and two-handed grab,
+        // rotate, and throw with proper hand tracking and release inertia.
+        // The entity's PhysicsBodyComponent (added on first grab) carries the
+        // throw velocity after release.
+        ManipulationComponent.configureEntity(
+            wrapper,
+            hoverEffect: .spotlight(.init()),
+            allowedInputTypes: .all,
+            collisionShapes: [collisionShape]
+        )
+
+        if var manipulation = wrapper.components[ManipulationComponent.self] {
+            manipulation.releaseBehavior = .stay
+            wrapper.components.set(manipulation)
+        }
 
         return wrapper
     }
@@ -264,23 +270,68 @@ struct QuizImmersiveView: View {
 
                 for (i, child) in wordsParent.children.enumerated() {
                     guard let comp = child.components[QuizWordComponent.self] else { continue }
-                    // Skip entities the user is interacting with or has already thrown.
-                    let id = ObjectIdentifier(child)
-                    if dragStates[id] != nil { continue }
-                    if throwTasks[id] != nil { continue }
+                    // Words leave the float orbit once the user has touched
+                    // them — physics owns their motion from then on.
                     if comp.isFree { continue }
 
                     let phase = Float(i) * 0.6
-                    let bob = sin(t + phase) * 0.03
-                    let sway = cos(t * 0.7 + phase) * 0.02
+                    let bob = sin(t + phase) * 0.04
+                    let sway = cos(t * 0.7 + phase) * 0.025
                     child.position = comp.homePosition + SIMD3<Float>(sway, bob, 0)
-                    child.transform.rotation = simd_quatf(angle: sin(t * 0.4 + phase) * 0.1, axis: [0, 1, 0])
+                    child.transform.rotation = simd_quatf(angle: sin(t * 0.4 + phase) * 0.12, axis: [0, 1, 0])
                 }
             }
         }
     }
 
-    // MARK: - Gestures
+    // MARK: - Manipulation Events
+
+    private func handleManipulationBegin(entity: Entity) {
+        // Mark the word as free so the float loop stops driving its position.
+        if var comp = entity.components[QuizWordComponent.self], !comp.isFree {
+            comp.isFree = true
+            entity.components.set(comp)
+        }
+
+        // Add a no-gravity dynamic physics body the first time this word is
+        // grabbed. ManipulationComponent uses it to carry inertia from the
+        // user's throw after release, while still letting the word coast in
+        // free space rather than falling.
+        if entity.components[PhysicsBodyComponent.self] == nil {
+            var body = PhysicsBodyComponent(
+                massProperties: .init(mass: 0.4),
+                material: .generate(staticFriction: 0.4, dynamicFriction: 0.4, restitution: 0.2),
+                mode: .dynamic
+            )
+            body.isAffectedByGravity = false
+            body.linearDamping = 0.7
+            body.angularDamping = 0.7
+            entity.components.set(body)
+        }
+    }
+
+    private func handleManipulationRelease(entity: Entity) {
+        // Wait briefly for the throw inertia to play out, then check whether
+        // the word came to rest near the definition card.
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(450))
+
+            guard quizViewModel.isActive,
+                  quizViewModel.lastResult == nil,
+                  let comp = entity.components[QuizWordComponent.self],
+                  entity.parent != nil else { return }
+
+            let pos = entity.position(relativeTo: nil)
+            let defPos = definitionAnchor.position(relativeTo: nil)
+
+            if simd_distance(pos, defPos) < 0.6 {
+                let correct = quizViewModel.checkAnswer(comp.wordText)
+                animateAnswer(entity: entity, correct: correct)
+            }
+        }
+    }
+
+    // MARK: - Tap
 
     private func findWordEntity(_ entity: Entity) -> Entity? {
         var current: Entity? = entity
@@ -301,215 +352,24 @@ struct QuizImmersiveView: View {
         animateAnswer(entity: wordEntity, correct: correct)
     }
 
-    private func handleDragChanged(_ value: EntityTargetValue<DragGesture.Value>) {
-        guard let wordEntity = findWordEntity(value.entity) else { return }
-        let id = ObjectIdentifier(wordEntity)
-
-        // Cancel any in-flight throw — the user has grabbed the word.
-        if let existing = throwTasks.removeValue(forKey: id) {
-            existing.cancel()
-        }
-
-        let now = CACurrentMediaTime()
-        let translation = value.convert(value.translation3D, from: .local, to: .scene)
-
-        if dragStates[id] == nil {
-            let startPos = wordEntity.position(relativeTo: nil)
-            dragStates[id] = DragState(
-                startPosition: startPos,
-                startRotation: wordEntity.transform.rotation,
-                lastPosition: startPos,
-                lastTime: now,
-                velocity: .zero
-            )
-        }
-
-        guard var state = dragStates[id] else { return }
-
-        let newPos = state.startPosition + translation
-        let dt = max(Float(now - state.lastTime), 1.0 / 240.0)
-        let instantaneous = (newPos - state.lastPosition) / dt
-        // Low-pass filter so a sudden flick doesn't dominate; still tracks throws.
-        let smoothed = state.velocity * 0.6 + instantaneous * 0.4
-
-        state.lastPosition = newPos
-        state.lastTime = now
-        state.velocity = smoothed
-        dragStates[id] = state
-
-        wordEntity.setPosition(newPos, relativeTo: nil)
-
-        // Apply a subtle tilt in the direction of motion so the word leans into
-        // the throw. Combined with the user's accumulated rotation.
-        let tilt = motionTilt(velocity: smoothed)
-        wordEntity.transform.rotation = tilt * state.startRotation
-    }
-
-    private func handleDragEnded(_ value: EntityTargetValue<DragGesture.Value>) {
-        guard let wordEntity = findWordEntity(value.entity) else { return }
-        let id = ObjectIdentifier(wordEntity)
-        let state = dragStates.removeValue(forKey: id)
-        let velocity = state?.velocity ?? .zero
-
-        guard let comp = wordEntity.components[QuizWordComponent.self] else { return }
-
-        // Decide whether the release counts as an answer attempt: either the
-        // word ended up near the definition card or it was thrown toward it
-        // with enough velocity that the predicted landing point is near it.
-        let releasePos = wordEntity.position(relativeTo: nil)
-        let defPos = definitionAnchor.position(relativeTo: nil)
-        let predictedLanding = releasePos + velocity * 0.35
-
-        let nearOnRelease = simd_distance(releasePos, defPos) < 0.55
-        let predictedNear = simd_distance(predictedLanding, defPos) < 0.55
-            && simd_length(velocity) > 0.6
-
-        if quizViewModel.isActive,
-           quizViewModel.lastResult == nil,
-           nearOnRelease || predictedNear {
-            let correct = quizViewModel.checkAnswer(comp.wordText)
-            animateAnswer(entity: wordEntity, correct: correct)
-            return
-        }
-
-        // Mark the word as free so the float loop leaves it alone, then let it
-        // coast to a stop with friction-based deceleration and gentle tumbling.
-        var updated = comp
-        updated.isFree = true
-        wordEntity.components.set(updated)
-
-        startThrow(entity: wordEntity, initialVelocity: velocity)
-    }
-
-    private func handleRotateChanged(_ value: EntityTargetValue<RotateGesture3D.Value>) {
-        guard let wordEntity = findWordEntity(value.entity) else { return }
-        let id = ObjectIdentifier(wordEntity)
-
-        // Don't fight with an active drag — drag's tilt rewrites rotation each frame.
-        if dragStates[id] != nil { return }
-
-        // A rotate cancels any in-flight throw so the word holds still.
-        if let throwing = throwTasks.removeValue(forKey: id) {
-            throwing.cancel()
-        }
-
-        if rotationStarts[id] == nil {
-            rotationStarts[id] = wordEntity.transform.rotation
-        }
-        guard let base = rotationStarts[id] else { return }
-
-        let q = value.rotation.quaternion
-        let delta = simd_quatf(
-            ix: Float(q.imag.x),
-            iy: Float(q.imag.y),
-            iz: Float(q.imag.z),
-            r: Float(q.real)
-        )
-        wordEntity.transform.rotation = delta * base
-
-        // Manual rotation also frees the word from the orbit's bobbing motion.
-        if var comp = wordEntity.components[QuizWordComponent.self], !comp.isFree {
-            comp.isFree = true
-            wordEntity.components.set(comp)
-        }
-    }
-
-    private func handleRotateEnded(_ value: EntityTargetValue<RotateGesture3D.Value>) {
-        guard let wordEntity = findWordEntity(value.entity) else { return }
-        rotationStarts.removeValue(forKey: ObjectIdentifier(wordEntity))
-    }
-
-    // MARK: - Throw Simulation
-
-    /// Returns a small tilt rotation that leans the word in the direction of
-    /// motion. Capped so the text stays legible.
-    private func motionTilt(velocity: SIMD3<Float>) -> simd_quatf {
-        let pitch = max(-0.35, min(0.35, -velocity.y * 0.4))
-        let roll = max(-0.45, min(0.45, -velocity.x * 0.4))
-        let yaw = max(-0.25, min(0.25, velocity.x * 0.15))
-        let qPitch = simd_quatf(angle: pitch, axis: [1, 0, 0])
-        let qRoll = simd_quatf(angle: roll, axis: [0, 0, 1])
-        let qYaw = simd_quatf(angle: yaw, axis: [0, 1, 0])
-        return qYaw * qPitch * qRoll
-    }
-
-    private func startThrow(entity: Entity, initialVelocity: SIMD3<Float>) {
-        let id = ObjectIdentifier(entity)
-        // If velocity is tiny, just leave the word where it sits — no animation.
-        guard simd_length(initialVelocity) > 0.05 else { return }
-
-        let task = Task { @MainActor in
-            var velocity = initialVelocity
-            // Tumble axis is perpendicular to the throw direction so the word
-            // rotates end-over-end naturally.
-            let tumbleAxis = normalizeOrDefault(simd_cross(velocity, SIMD3<Float>(0, 1, 0)),
-                                                fallback: SIMD3<Float>(1, 0, 0))
-            let tumbleSpeed = min(simd_length(initialVelocity) * 1.5, 6.0)
-
-            // Tunable friction (per-second multiplier) and termination threshold.
-            let friction: Float = 2.2
-            let minSpeed: Float = 0.05
-            let timestep: Float = 1.0 / 60.0
-
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(16))
-                if Task.isCancelled { break }
-
-                // Exponential velocity decay — feels like a soft drag on the word.
-                let decay = expf(-friction * timestep)
-                velocity *= decay
-
-                let pos = entity.position(relativeTo: nil) + velocity * timestep
-                entity.setPosition(pos, relativeTo: nil)
-
-                // Tumble — angular speed decays alongside linear speed so the word
-                // settles upright-ish.
-                let speedFactor = simd_length(velocity) / max(simd_length(initialVelocity), 0.001)
-                let stepAngle = tumbleSpeed * speedFactor * timestep
-                let stepRot = simd_quatf(angle: stepAngle, axis: tumbleAxis)
-                entity.transform.rotation = stepRot * entity.transform.rotation
-
-                if simd_length(velocity) < minSpeed { break }
-            }
-
-            // Settle: ease the residual tilt back toward upright so the word is
-            // readable wherever it landed.
-            if !Task.isCancelled {
-                var target = entity.transform
-                target.rotation = settledRotation(from: entity.transform.rotation)
-                entity.move(to: target, relativeTo: entity.parent, duration: 0.4,
-                            timingFunction: .easeOut)
-            }
-
-            throwTasks.removeValue(forKey: id)
-        }
-
-        throwTasks[id] = task
-    }
-
-    private func normalizeOrDefault(_ v: SIMD3<Float>, fallback: SIMD3<Float>) -> SIMD3<Float> {
-        let len = simd_length(v)
-        return len > 0.0001 ? v / len : fallback
-    }
-
-    /// Reduces an arbitrary rotation toward a gentler, near-upright orientation
-    /// so a thrown word remains legible after it settles.
-    private func settledRotation(from rotation: simd_quatf) -> simd_quatf {
-        let halfAngle = rotation.angle * 0.35
-        return simd_quatf(angle: halfAngle, axis: rotation.axis)
-    }
-
     // MARK: - Answer Animation
 
     private func animateAnswer(entity: Entity, correct: Bool) {
+        // Drop physics + manipulation so the response animation isn't fought
+        // by the simulation or interrupted by another grab.
+        entity.components.remove(PhysicsBodyComponent.self)
+        entity.components.remove(PhysicsMotionComponent.self)
+        entity.components.remove(ManipulationComponent.self)
+
         guard let modelEntity = entity.children.first as? ModelEntity else { return }
 
         var material = PhysicallyBasedMaterial()
         material.baseColor = .init(tint: correct ? .systemGreen : .systemRed)
         material.roughness = 0.2
         material.metallic = 0.9
-        material.emissiveColor = .init(color: (correct ? UIColor.systemGreen : UIColor.systemRed)
-            .withAlphaComponent(0.8))
+        material.emissiveColor = .init(color: correct ? UIColor.systemGreen : UIColor.systemRed)
+        material.emissiveIntensity = 0.9
+        material.clearcoat = 0.7
         modelEntity.model?.materials = [material]
 
         if correct {
